@@ -3,21 +3,20 @@ const startpairing = require('./pair');
 const fs = require('fs');
 
 // ============================================================
-// ⚙️ CONFIGURATION (FILL THIS IN CAREFULLY)
+// ⚙️ CONFIGURATION
 // ============================================================
 const BOT_TOKEN = "8491961282:AAHSiAiVPH5IaDOcq_7oliCrCFrzVX4cfrk"; 
 
-// 1. CHAT IDs (Where the bot checks membership)
-// You can get these by forwarding a message to @userinfobot
-const TELEGRAM_CHANNEL_ID = "@ULTRALIGHTkl"; // e.g. @MegaUpdates
-const TELEGRAM_GROUP_ID = "@ULTRALIGHTlm";     // e.g. @MegaSupport
+// 1. CHAT IDs (Make sure the bot is ADMIN in these chats)
+const TELEGRAM_CHANNEL_ID = "@ULTRALIGHTkl"; 
+const TELEGRAM_GROUP_ID = "@ULTRALIGHTlm";     
 
-// 2. LINKS (For the buttons)
+// 2. LINKS
 const CHANNEL_LINK = "https://t.me/ULTRALIGHTkl";
 const GROUP_LINK = "https://t.me/ULTRALIGHTlm";
 const WHATSAPP_CHANNEL_LINK = "https://whatsapp.com/channel/0029VbBaAl61iUxbNURZ3Z2y";
 
-// 3. VIDEO (Direct MP4 Link for the Start Menu)
+// 3. VIDEO
 const START_VIDEO = "https://files.catbox.moe/6qk009.mp4"; 
 
 // ============================================================
@@ -48,16 +47,16 @@ async function isUserVerified(ctx) {
 
         return inChannel && inGroup;
     } catch (error) {
-        console.log("Verification Error (Make sure bot is admin in channel/group):", error.message);
-        // If check fails (e.g. bot not admin), we default to false to prevent abuse
+        console.log("Verification Error (Bot must be admin):", error.message);
+        // Default to false if we can't check
         return false;
     }
 }
 
-// --- 1. START COMMAND (With Force Join Buttons) ---
+// --- 1. START COMMAND (Fixed Buttons) ---
 bot.start(async (ctx) => {
     const welcomeText = `
-👋 *Welcome to MEGA Bot!*
+👋 *Welcome to ULTRALIGHT Bot!*
 
 To use this bot, you must verify that you have joined our official channels.
 
@@ -68,25 +67,34 @@ To use this bot, you must verify that you have joined our official channels.
 *Click "✅ VERIFY" when done.*
 `;
 
+    // 🛠️ FIX: Clean Button Labels
     const buttons = Markup.inlineKeyboard([
         [
-            Markup.button.url('📢 https://t.me/ULTRALIGHTkl', CHANNEL_LINK),
-            Markup.button.url('👥 https://t.me/ULTRALIGHTlm', GROUP_LINK)
+            Markup.button.url('📢 Telegram Channel', CHANNEL_LINK),
+            Markup.button.url('👥 Telegram Group', GROUP_LINK)
         ],
         [
-            Markup.button.url('💚 https://whatsapp.com/channel/0029VbBaAl61iUxbNURZ3Z2y', WHATSAPP_CHANNEL_LINK)
+            Markup.button.url('💚 WhatsApp Channel', WHATSAPP_CHANNEL_LINK)
         ],
         [
             Markup.button.callback('✅ VERIFY & UNLOCK', 'verify_me')
         ]
     ]);
 
-    // Send Video with Buttons
-    await ctx.replyWithVideo(START_VIDEO, {
-        caption: welcomeText,
-        parse_mode: 'Markdown',
-        ...buttons
-    });
+    // Send Video with Fallback
+    try {
+        await ctx.replyWithVideo(START_VIDEO, {
+            caption: welcomeText,
+            parse_mode: 'Markdown',
+            ...buttons
+        });
+    } catch (e) {
+        // If video fails, send photo/text
+        await ctx.reply(welcomeText, {
+            parse_mode: 'Markdown',
+            ...buttons
+        });
+    }
 });
 
 // --- 2. VERIFY BUTTON ACTION ---
@@ -134,7 +142,6 @@ async function autoStart() {
 
 // --- 4. CONNECT COMMAND ---
 bot.command('connect', async (ctx) => {
-    // 🔒 VERIFICATION CHECK
     const isVerified = await isUserVerified(ctx);
     if (!isVerified) return ctx.reply("❌ *Access Denied.*\nPlease type /start and join our channels first.", { parse_mode: 'Markdown' });
 
@@ -148,12 +155,10 @@ bot.command('connect', async (ctx) => {
     const phoneNumber = args[1].replace(/[^0-9]/g, '');
     const chatId = ctx.chat.id;
 
-    // SAVE CHAT ID
     fs.writeFileSync(CONFIG_FILE, JSON.stringify({ chatId: chatId }));
 
     const userSessionPath = `${SESSION_DIR}/${phoneNumber}`;
     
-    // Clean old session if exists for fresh pairing
     if (fs.existsSync(userSessionPath)) {
         ctx.reply("🧹 detected old session. cleaning it...");
         fs.rmSync(userSessionPath, { recursive: true, force: true });
@@ -171,7 +176,6 @@ bot.command('connect', async (ctx) => {
 
 // --- 5. DISCONNECT COMMAND ---
 bot.command('disconnect', async (ctx) => {
-    // 🔒 VERIFICATION CHECK
     const isVerified = await isUserVerified(ctx);
     if (!isVerified) return ctx.reply("❌ *Access Denied.*\nPlease type /start and verify first.", { parse_mode: 'Markdown' });
 
@@ -199,9 +203,8 @@ bot.command('disconnect', async (ctx) => {
 
 bot.launch();
 
-// --- RUN THE AUTO-RESUME ---
 autoStart();
 
-// Enable graceful stop
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
+
