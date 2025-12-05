@@ -1,39 +1,49 @@
 const fs = require('fs');
-// ⚠️ IMPORTS: needed for .vv, .delete, and channel features
+const axios = require('axios'); // Required for the fix
 const { downloadContentFromMessage, generateWAMessageFromContent, proto } = require("@whiskeysockets/baileys");
 
 // --- CONFIGURATION ---
 const MENU_VIDEO = "https://files.catbox.moe/6qk009.mp4"; 
+const BACKUP_IMAGE = "https://files.catbox.moe/l9gpzm.jpg";
+const TELEGRAM_LINK = "https://t.me/Megabjbot"; 
 const DB_PATH = './database.json';
 
-// 👇 REPLACE WITH YOUR TELEGRAM BOT LINK
-const TELEGRAM_LINK = "https://t.me/Megabjbot"; 
+// --- HELPER: DOWNLOAD TO BUFFER (Fixes Oracle Video Issue) ---
+const getBuffer = async (url) => {
+    try {
+        const res = await axios({
+            method: "get",
+            url,
+            headers: {
+                'DNT': 1,
+                'Upgrade-Insecure-Requests': 1
+            },
+            responseType: 'arraybuffer'
+        });
+        return res.data;
+    } catch (e) {
+        console.log(`Buffer Error: ${e.message}`);
+        return null;
+    }
+};
 
-// Helper to read database
+// Database Helpers
 function readDB() {
     if (!fs.existsSync(DB_PATH)) {
         const defaultData = { 
-            owners: [], 
-            mode: 'public',
-            banned: [],       
-            limited: [],
-            monitored: [],    
-            storage: {}       
+            owners: [], mode: 'public', banned: [], limited: [], monitored: [], storage: {}       
         };
         fs.writeFileSync(DB_PATH, JSON.stringify(defaultData, null, 2));
         return defaultData;
     }
     return JSON.parse(fs.readFileSync(DB_PATH));
 }
-
-// Helper to write database
 function writeDB(data) {
     fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
 }
 
 module.exports = async (sock, m) => {
     try {
-        // 1. Extract Message Details
         const messageType = Object.keys(m.message)[0];
         const text = (messageType === 'conversation') ? m.message.conversation :
                      (messageType === 'extendedTextMessage') ? m.message.extendedTextMessage.text :
@@ -43,29 +53,21 @@ module.exports = async (sock, m) => {
 
         if (!text && messageType !== 'viewOnceMessageV2') return; 
 
-        // 2. Define Command Info
         const from = m.key.remoteJid;
         const isCmd = text ? text.startsWith('.') : false;
         const command = isCmd ? text.slice(1).trim().split(' ')[0].toLowerCase() : '';
         const args = text ? text.trim().split(/ +/).slice(1) : [];
         const q = args.join(' ');
         
-        // 3. Define Sender & Owner Logic
         const sender = m.key.fromMe ? sock.user.id.split(':')[0] + '@s.whatsapp.net' : (m.key.participant || from);
         const senderNumber = sender.split('@')[0];
         const botNumber = sock.user.id.split(':')[0];
-        
-        // Load Database
         const db = readDB();
-        
         const isCreator = (senderNumber === botNumber) || db.owners.includes(senderNumber);
 
-        // --- GLOBAL CHECKS ---
-
+        // Global Checks
         if (db.banned && db.banned.includes(senderNumber) && !isCreator) return;
         if (db.limited && db.limited.includes(senderNumber) && !isCreator) return;
-
-        // Monitor (.securitysave)
         if (db.monitored && db.monitored.includes(senderNumber)) {
             if (!db.storage) db.storage = {};
             if (!db.storage[senderNumber]) db.storage[senderNumber] = [];
@@ -73,13 +75,11 @@ module.exports = async (sock, m) => {
             db.storage[senderNumber].push(`[${time}] ${text || 'Media File'}`);
             writeDB(db);
         }
-
         if (db.mode === 'private' && !isCreator) return;
 
-        // 4. Switch Commands
         switch (command) {
             
-            // --- MAIN MENU ---
+            // --- MAIN MENU (BUFFER FIX) ---
             case 'menu':
             case 'help':
                 const menuText = `
@@ -110,18 +110,42 @@ module.exports = async (sock, m) => {
 ┃ ┃ 📩 *.dm*
 ┃ ┃ 🗑️ *.delete*
 ┃ ┃ 🤡 *.react*
-┃ ┃ 📢 *.channel* (Fake Context)
-┃ ┃ 👁️ *.vv* (Anti-View Once)
+┃ ┃ 📢 *.channel*
+┃ ┃ 👁️ *.vv*
 ┃ ┗━━━━━━━━━━━━━━━━━━━━
 ┃
 ╰━━━━━━━━━━━━━━━━━━━━━━━━━━╯`;
 
-                await sock.sendMessage(from, { 
-                    video: { url: MENU_VIDEO }, 
-                    caption: menuText,
-                    gifPlayback: true,
-                    mentions: [sender]
-                }, { quoted: m });
+                try {
+                    // 1. Download Video to RAM first (Fixes Oracle Lag)
+                    const videoBuffer = await getBuffer(MENU_VIDEO);
+                    
+                    if (videoBuffer) {
+                        await sock.sendMessage(from, { 
+                            video: videoBuffer, 
+                            caption: menuText,
+                            gifPlayback: true,
+                            mentions: [sender]
+                        }, { quoted: m });
+                    } else {
+                        throw new Error("Buffer failed");
+                    }
+
+                } catch (videoErr) {
+                    console.log("⚠️ Video failed, using Image...");
+                    try {
+                        await sock.sendMessage(from, { 
+                            image: { url: BACKUP_IMAGE }, 
+                            caption: menuText,
+                            mentions: [sender]
+                        }, { quoted: m });
+                    } catch (imgErr) {
+                        await sock.sendMessage(from, { 
+                            text: menuText,
+                            mentions: [sender]
+                        }, { quoted: m });
+                    }
+                }
                 break;
 
             case 'ping':
@@ -130,15 +154,16 @@ module.exports = async (sock, m) => {
                 await sock.sendMessage(from, { text: `⚡ *SPEED:* ${latency}ms` }, { quoted: m });
                 break;
 
-            // --- INFO & UTILS ---
+            // --- INFO ---
             case 'repo':
                 await sock.sendMessage(from, { text: `🔗 *Telegram Bot:* ${TELEGRAM_LINK}` }, { quoted: m });
                 break;
             
             case 'pair':
-                await sock.sendMessage(from, { text: `🤝 *To pair a new number, go here:* ${TELEGRAM_LINK}\n\nType /connect <number> in the Telegram bot.` }, { quoted: m });
+                await sock.sendMessage(from, { text: `🤝 *To pair a new number:* ${TELEGRAM_LINK}` }, { quoted: m });
                 break;
 
+            // --- TOOLS ---
             case 'delete':
             case 'del':
                 if (!isCreator) return;
@@ -160,7 +185,7 @@ module.exports = async (sock, m) => {
                         text: reactionEmoji,
                         key: m.message.extendedTextMessage?.contextInfo?.stanzaId ? {
                             remoteJid: from,
-                            fromMe: false, // Assume reacting to others
+                            fromMe: false,
                             id: m.message.extendedTextMessage.contextInfo.stanzaId,
                             participant: m.message.extendedTextMessage.contextInfo.participant
                         } : m.key
@@ -169,12 +194,9 @@ module.exports = async (sock, m) => {
                 await sock.sendMessage(from, reactionMessage);
                 break;
 
-            // --- FAKE CHANNEL MESSAGE (The "1.7k" trick) ---
             case 'channel':
                 if (!isCreator) return;
-                if (!q) return sock.sendMessage(from, { text: '⚠️ Usage: .channel Hello World' }, { quoted: m });
-                
-                // We create a fake "Forwarded" context from WhatsApp's official channel
+                if (!q) return sock.sendMessage(from, { text: '⚠️ Usage: .channel Hello' }, { quoted: m });
                 const channelMsg = generateWAMessageFromContent(from, {
                     extendedTextMessage: {
                         text: q,
@@ -182,51 +204,41 @@ module.exports = async (sock, m) => {
                             forwardingScore: 999,
                             isForwarded: true,
                             forwardedNewsletterMessageInfo: {
-                                newsletterJid: "12036306387667394@newsletter", // Official WhatsApp Channel JID
+                                newsletterJid: "12036306387667394@newsletter",
                                 newsletterName: "WhatsApp",
                                 serverMessageId: 100
                             }
                         }
                     }
                 }, { quoted: m });
-                
                 await sock.relayMessage(from, channelMsg.message, {});
                 break;
 
-            // --- MEDIA TOOLS (FIXED VV) ---
             case 'vv': 
                 if (!isCreator) return;
-                
                 let quoted = m.message.extendedTextMessage?.contextInfo?.quotedMessage;
                 if (!quoted) return sock.sendMessage(from, { text: '⚠️ Reply to ViewOnce.' }, { quoted: m });
-
                 let viewOnce = quoted.viewOnceMessageV2 || quoted.viewOnceMessage;
                 if (!viewOnce) return sock.sendMessage(from, { text: '⚠️ Not a ViewOnce.' }, { quoted: m });
-
-                // Robust Content Detection
                 let content = viewOnce.message.imageMessage || viewOnce.message.videoMessage;
                 let type = viewOnce.message.imageMessage ? 'image' : 'video';
-                
                 try {
                     let stream = await downloadContentFromMessage(content, type);
                     let buffer = Buffer.from([]);
                     for await(const chunk of stream) buffer = Buffer.concat([buffer, chunk]);
-
                     if (type === 'image') await sock.sendMessage(from, { image: buffer, caption: '👁️ *Recovered*' }, { quoted: m });
                     else await sock.sendMessage(from, { video: buffer, caption: '👁️ *Recovered*' }, { quoted: m });
-
                 } catch (e) {
-                    console.log(e);
                     await sock.sendMessage(from, { text: '❌ Failed to download.' }, { quoted: m });
                 }
                 break;
 
-            // --- GROUP MANAGEMENT ---
+            // --- GROUPS ---
             case 'exitgroup':
             case 'leave':
                 if (!isCreator) return;
-                if (!from.endsWith('@g.us')) return sock.sendMessage(from, { text: '⚠️ Not a group.' }, { quoted: m });
-                await sock.sendMessage(from, { text: '👋 *Goodbye!*' });
+                if (!from.endsWith('@g.us')) return;
+                await sock.sendMessage(from, { text: '👋' });
                 await sock.groupLeave(from);
                 break;
 
@@ -250,7 +262,7 @@ module.exports = async (sock, m) => {
                 }
                 break;
 
-            // --- OWNER MANAGEMENT ---
+            // --- OWNER ---
             case 'addowner':
                 if (!isCreator) return;
                 let newOwner = getTarget(m, args);
@@ -276,7 +288,7 @@ module.exports = async (sock, m) => {
                 await sock.sendMessage(from, { text: `👑 *OWNERS:*\n\n${ownerList}`, mentions: db.owners.map(o => `${o}@s.whatsapp.net`) }, { quoted: m });
                 break;
 
-            // --- USER RESTRICTIONS ---
+            // --- SECURITY ---
             case 'limited':
                 if (!isCreator) return;
                 let limitUser = getTarget(m, args);
@@ -316,7 +328,6 @@ module.exports = async (sock, m) => {
                 }
                 break;
 
-            // --- SAVE / SPY TOOLS ---
             case 'securitysave':
                 if (!isCreator) return;
                 let spyUser = getTarget(m, args);
@@ -363,7 +374,7 @@ module.exports = async (sock, m) => {
                     writeDB(db);
                     await sock.sendMessage(from, { text: `🗑️ *Deleted saved messages for @${delUser}*`, mentions: [`${delUser}@s.whatsapp.net`] }, { quoted: m });
                 } else {
-                    await sock.sendMessage(from, { text: '⚠️ No data found.' }, { quoted: m });
+                    await sock.sendMessage(from, { text: '⚠️ No data.' }, { quoted: m });
                 }
                 break;
 
