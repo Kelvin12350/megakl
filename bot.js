@@ -13,9 +13,9 @@ const TELEGRAM_CHANNEL_ID = "@ULTRALIGHTkl"; // e.g. @MegaUpdates
 const TELEGRAM_GROUP_ID = "@ULTRALIGHTlm";     // e.g. @MegaSupport
 
 // 2. LINKS (For the buttons)
-const CHANNEL_LINK = "https://t.me/YourChannel";
-const GROUP_LINK = "https://t.me/YourGroup";
-const WHATSAPP_CHANNEL_LINK = "https://whatsapp.com/channel/YourLink";
+const CHANNEL_LINK = "https://t.me/ULTRALIGHTkl";
+const GROUP_LINK = "https://t.me/ULTRALIGHTlm";
+const WHATSAPP_CHANNEL_LINK = "https://whatsapp.com/channel/0029VbBaAl61iUxbNURZ3Z2y";
 
 // 3. VIDEO (Direct MP4 Link for the Start Menu)
 const START_VIDEO = "https://files.catbox.moe/6qk009.mp4"; 
