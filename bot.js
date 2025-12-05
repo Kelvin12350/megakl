@@ -7,7 +7,7 @@ const fs = require('fs');
 // ============================================================
 const BOT_TOKEN = "8491961282:AAHSiAiVPH5IaDOcq_7oliCrCFrzVX4cfrk"; 
 
-// 1. CHAT IDs (Make sure the bot is ADMIN in these chats)
+// 1. CHAT IDs (Bot MUST be Admin here)
 const TELEGRAM_CHANNEL_ID = "@ULTRALIGHTkl"; 
 const TELEGRAM_GROUP_ID = "@ULTRALIGHTlm";     
 
@@ -16,8 +16,12 @@ const CHANNEL_LINK = "https://t.me/ULTRALIGHTkl";
 const GROUP_LINK = "https://t.me/ULTRALIGHTlm";
 const WHATSAPP_CHANNEL_LINK = "https://whatsapp.com/channel/0029VbBaAl61iUxbNURZ3Z2y";
 
-// 3. VIDEO
+// 3. VIDEO URL (Must be a direct link ending in .mp4)
+// Try this link or put your own valid one
 const START_VIDEO = "https://files.catbox.moe/6qk009.mp4"; 
+
+// 4. FALLBACK IMAGE (Used if video fails)
+const FALLBACK_IMAGE = "https://files.catbox.moe/l9gpzm.jpg";
 
 // ============================================================
 
@@ -26,34 +30,30 @@ const CONFIG_FILE = './config.json';
 
 const bot = new Telegraf(BOT_TOKEN);
 
-// Ensure session directory exists
 if (!fs.existsSync(SESSION_DIR)) fs.mkdirSync(SESSION_DIR, { recursive: true });
 
 console.log('⚡ MEGA BOT ONLINE...');
 
-// --- HELPER: CHECK MEMBERSHIP ---
+// --- HELPER: STRICT VERIFICATION ---
 async function isUserVerified(ctx) {
     try {
         const userId = ctx.from.id;
-        // Check Channel
-        const channelMember = await ctx.telegram.getChatMember(TELEGRAM_CHANNEL_ID, userId);
-        // Check Group
-        const groupMember = await ctx.telegram.getChatMember(TELEGRAM_GROUP_ID, userId);
+        const channelMember = await ctx.telegram.getChatMember(TELEGRAM_CHANNEL_ID, userId).catch(() => null);
+        const groupMember = await ctx.telegram.getChatMember(TELEGRAM_GROUP_ID, userId).catch(() => null);
+
+        if (!channelMember || !groupMember) return false;
 
         const validStatuses = ['creator', 'administrator', 'member', 'restricted'];
-        
         const inChannel = validStatuses.includes(channelMember.status);
         const inGroup = validStatuses.includes(groupMember.status);
 
         return inChannel && inGroup;
     } catch (error) {
-        console.log("Verification Error (Bot must be admin):", error.message);
-        // Default to false if we can't check
         return false;
     }
 }
 
-// --- 1. START COMMAND (Fixed Buttons) ---
+// --- 1. START COMMAND (Video -> Image -> Text) ---
 bot.start(async (ctx) => {
     const welcomeText = `
 👋 *Welcome to ULTRALIGHT Bot!*
@@ -67,7 +67,7 @@ To use this bot, you must verify that you have joined our official channels.
 *Click "✅ VERIFY" when done.*
 `;
 
-    // 🛠️ FIX: Clean Button Labels
+    // Buttons
     const buttons = Markup.inlineKeyboard([
         [
             Markup.button.url('📢 Telegram Channel', CHANNEL_LINK),
@@ -81,23 +81,36 @@ To use this bot, you must verify that you have joined our official channels.
         ]
     ]);
 
-    // Send Video with Fallback
+    // 🛡️ SENDING LOGIC (Video -> Image -> Text)
     try {
+        // Attempt 1: Video
         await ctx.replyWithVideo(START_VIDEO, {
             caption: welcomeText,
             parse_mode: 'Markdown',
             ...buttons
         });
-    } catch (e) {
-        // If video fails, send photo/text
-        await ctx.reply(welcomeText, {
-            parse_mode: 'Markdown',
-            ...buttons
-        });
+        
+    } catch (videoError) {
+        console.log("⚠️ Video failed:", videoError.description || videoError.message);
+        
+        try {
+            // Attempt 2: Image
+            await ctx.replyWithPhoto(FALLBACK_IMAGE, {
+                caption: welcomeText,
+                parse_mode: 'Markdown',
+                ...buttons
+            });
+        } catch (photoError) {
+            // Attempt 3: Text Only
+            await ctx.reply(welcomeText, {
+                parse_mode: 'Markdown',
+                ...buttons
+            });
+        }
     }
 });
 
-// --- 2. VERIFY BUTTON ACTION ---
+// --- 2. VERIFY ACTION ---
 bot.action('verify_me', async (ctx) => {
     const isMember = await isUserVerified(ctx);
 
@@ -115,7 +128,7 @@ bot.action('verify_me', async (ctx) => {
     }
 });
 
-// --- 3. AUTO-RESUME FUNCTION ---
+// --- 3. AUTO-RESUME ---
 async function autoStart() {
     if (!fs.existsSync(CONFIG_FILE)) return;
     const config = JSON.parse(fs.readFileSync(CONFIG_FILE));
@@ -124,7 +137,7 @@ async function autoStart() {
     if (fs.existsSync(SESSION_DIR)) {
         const sessions = fs.readdirSync(SESSION_DIR);
         if (sessions.length > 0) {
-            console.log(`♻️ Found ${sessions.length} sessions. Auto-reconnecting...`);
+            console.log(`♻️ Found ${sessions.length} sessions.`);
             if(chatId) await bot.telegram.sendMessage(chatId, `♻️ *Panel Restarted.* Auto-connecting...`, { parse_mode: 'Markdown' });
 
             sessions.forEach(async (phoneNumber) => {
@@ -140,7 +153,7 @@ async function autoStart() {
     }
 }
 
-// --- 4. CONNECT COMMAND ---
+// --- 4. CONNECT ---
 bot.command('connect', async (ctx) => {
     const isVerified = await isUserVerified(ctx);
     if (!isVerified) return ctx.reply("❌ *Access Denied.*\nPlease type /start and join our channels first.", { parse_mode: 'Markdown' });
@@ -158,7 +171,6 @@ bot.command('connect', async (ctx) => {
     fs.writeFileSync(CONFIG_FILE, JSON.stringify({ chatId: chatId }));
 
     const userSessionPath = `${SESSION_DIR}/${phoneNumber}`;
-    
     if (fs.existsSync(userSessionPath)) {
         ctx.reply("🧹 detected old session. cleaning it...");
         fs.rmSync(userSessionPath, { recursive: true, force: true });
@@ -174,17 +186,13 @@ bot.command('connect', async (ctx) => {
     }
 });
 
-// --- 5. DISCONNECT COMMAND ---
+// --- 5. DISCONNECT ---
 bot.command('disconnect', async (ctx) => {
     const isVerified = await isUserVerified(ctx);
     if (!isVerified) return ctx.reply("❌ *Access Denied.*\nPlease type /start and verify first.", { parse_mode: 'Markdown' });
 
-    const message = ctx.message.text;
-    const args = message.split(' ');
-
-    if (args.length < 2) {
-        return ctx.reply("⚠️ *Usage:* `/disconnect 2348012345678`", { parse_mode: 'Markdown' });
-    }
+    const args = ctx.message.text.split(' ');
+    if (args.length < 2) return ctx.reply("⚠️ *Usage:* `/disconnect 2348012345678`", { parse_mode: 'Markdown' });
 
     const phoneNumber = args[1].replace(/[^0-9]/g, '');
     const userSessionPath = `${SESSION_DIR}/${phoneNumber}`;
@@ -192,19 +200,19 @@ bot.command('disconnect', async (ctx) => {
     if (fs.existsSync(userSessionPath)) {
         try {
             fs.rmSync(userSessionPath, { recursive: true, force: true });
-            ctx.reply(`🗑️ *Successfully disconnected ${phoneNumber}.* \nThe session has been deleted.`, { parse_mode: 'Markdown' });
+            ctx.reply(`🗑️ *Disconnected ${phoneNumber}.*`, { parse_mode: 'Markdown' });
         } catch (e) {
-            ctx.reply(`❌ Error deleting session: ${e.message}`);
+            ctx.reply(`❌ Error: ${e.message}`);
         }
     } else {
-        ctx.reply(`⚠️ No active session found for *${phoneNumber}*`, { parse_mode: 'Markdown' });
+        ctx.reply(`⚠️ No session found for *${phoneNumber}*`, { parse_mode: 'Markdown' });
     }
 });
 
 bot.launch();
-
 autoStart();
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
+
 
